@@ -148,8 +148,8 @@ class NovaBot(commands.Bot):
                 data = response.json()
                 return {
                     'online': True,
-                    'players': data.get('clients', 0),
-                    'max_players': data.get('sv_maxclients', 64),
+                    'players': data.get('clients', 19),
+                    'max_players': data.get('sv_maxclients', 128),
                     'server_name': data.get('hostname', 'Nova Roleplay')
                 }
         except:
