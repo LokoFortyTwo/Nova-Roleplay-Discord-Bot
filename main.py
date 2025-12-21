@@ -3,12 +3,13 @@
 # ║               CJ DEV 2025 - NOVA ROLEPLAY BOT      ║
 # ╚════════════════════════════════════════════════════╝
 
+import os
+import json
+import asyncio
+import requests
 import discord
 from discord.ext import commands, tasks
-import json, os, requests, asyncio
 from datetime import datetime
-from typing import Optional
-import random
 
 try:
     import mysql.connector
@@ -21,15 +22,16 @@ except ImportError:
 # ╔════════════════════════════════════════════════════╗
 # ║                   CONFIGURATION                   ║
 # ╚════════════════════════════════════════════════════╝
-config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+config_path = os.path.join(os.path.dirname(__file__), "config.json")
 try:
-    with open(config_path, 'r', encoding='utf-8') as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 except FileNotFoundError:
     print("❌ config.json introuvable")
-    exit(1)
+    raise SystemExit(1)
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_USER = os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
@@ -51,13 +53,13 @@ DISABLE_MYSQL = os.getenv("DISABLE_MYSQL", "1") == "1"
 class DatabaseManager:
     def __init__(self):
         self.connection_params = {
-            'host': MYSQL_HOST,
-            'user': MYSQL_USER,
-            'password': MYSQL_PASSWORD,
-            'database': MYSQL_DATABASE,
-            'port': MYSQL_PORT,
-            'autocommit': True,
-            'charset': 'utf8mb4'
+            "host": MYSQL_HOST,
+            "user": MYSQL_USER,
+            "password": MYSQL_PASSWORD,
+            "database": MYSQL_DATABASE,
+            "port": MYSQL_PORT,
+            "autocommit": True,
+            "charset": "utf8mb4",
         }
 
     async def initialize(self):
@@ -86,16 +88,21 @@ class NovaBot(commands.Bot):
         intents.message_content = True
         intents.guilds = True
         intents.members = True
+
         super().__init__(
-            command_prefix=config['bot_settings']['prefix'],
+            command_prefix=config["bot_settings"]["prefix"],
             intents=intents,
-            description=config['bot_settings']['description']
+            description=config["bot_settings"]["description"],
         )
+
         self.server_online = False
         self.player_count = 0
         self.max_players = 64
         self.db_available = False
         self.last_f8_sent = None
+
+        self._fivem_host = config["server_info"]["fivem_ip"]
+        self._fivem_base = f"http://{self._fivem_host}:30120"
 
     async def setup_hook(self):
         self.db_available = await db_manager.initialize()
@@ -111,6 +118,14 @@ class NovaBot(commands.Bot):
                 self.send_f8_auto.start()
         await self.update_status_once()
 
+    def _fetch_json(self, url: str, timeout: int = 5):
+        return requests.get(url, timeout=timeout).json()
+
+    async def _get_json(self, path: str, timeout: int = 5):
+        loop = asyncio.get_event_loop()
+        url = f"{self._fivem_base}{path}"
+        return await loop.run_in_executor(None, lambda: self._fetch_json(url, timeout=timeout))
+
     @tasks.loop(minutes=5)
     async def update_status(self):
         await self.update_status_once()
@@ -118,43 +133,71 @@ class NovaBot(commands.Bot):
     async def update_status_once(self):
         try:
             server_info = await self.get_fivem_server_info()
-            self.server_online = server_info['online']
-            self.player_count = server_info['players']
-            self.max_players = server_info['max_players']
+            self.server_online = server_info["online"]
+            self.player_count = server_info["players"]
+            self.max_players = server_info["max_players"]
 
-            if server_info['online']:
+            if server_info["online"]:
                 status_text = f"🟢 {self.player_count}/{self.max_players} joueurs sur Nova Roleplay"
                 await self.change_presence(
                     status=discord.Status.online,
-                    activity=discord.Activity(type=discord.ActivityType.watching, name=status_text)
+                    activity=discord.Activity(type=discord.ActivityType.watching, name=status_text),
                 )
             else:
                 await self.change_presence(
                     status=discord.Status.idle,
-                    activity=discord.Activity(type=discord.ActivityType.watching, name="🔴 Serveur hors ligne...")
+                    activity=discord.Activity(type=discord.ActivityType.watching, name="🔴 Serveur hors ligne..."),
                 )
         except Exception as e:
             print(f"Erreur statut: {e}")
             self.server_online = False
 
     async def get_fivem_server_info(self):
+        # 1) dynamic.json (le meilleur pour clients/maxclients)
         try:
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.get(f"http://{config['server_info']['fivem_ip']}:30120/info.json", timeout=5)
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    'online': True,
-                    'players': data.get('clients', 29),
-                    'max_players': data.get('sv_maxclients', 128),
-                    'server_name': data.get('hostname', 'Nova Roleplay')
-                }
-        except:
+            data = await self._get_json("/dynamic.json", timeout=5)
+            players = int(data.get("clients", 0))
+            max_players = int(data.get("sv_maxclients", 64))
+            hostname = data.get("hostname", "Nova Roleplay")
+            return {
+                "online": True,
+                "players": players,
+                "max_players": max_players,
+                "server_name": hostname,
+            }
+        except Exception:
             pass
-        return {'online': False, 'players': 0, 'max_players': 64, 'server_name': 'Nova Roleplay'}
+
+        # 2) info.json (fallback)
+        try:
+            data = await self._get_json("/info.json", timeout=5)
+            players = int(data.get("clients", 0))
+            max_players = int(data.get("sv_maxclients", 64))
+            hostname = data.get("hostname", "Nova Roleplay")
+            return {
+                "online": True,
+                "players": players,
+                "max_players": max_players,
+                "server_name": hostname,
+            }
+        except Exception:
+            pass
+
+        # 3) players.json (fallback count = len(list))
+        try:
+            data = await self._get_json("/players.json", timeout=5)
+            if isinstance(data, list):
+                players = len(data)
+                return {
+                    "online": True,
+                    "players": players,
+                    "max_players": 64,
+                    "server_name": "Nova Roleplay",
+                }
+        except Exception:
+            pass
+
+        return {"online": False, "players": 0, "max_players": 64, "server_name": "Nova Roleplay"}
 
     # ╔════════════════════════════════════════════════════╗
     # ║                     F8 AUTO                        ║
@@ -171,11 +214,11 @@ class NovaBot(commands.Bot):
             channel_id = 1365802556957134858
             channel = self.get_channel(channel_id)
             if channel:
-                fivem_ip = config['server_info']['fivem_ip']
+                fivem_ip = config["server_info"]["fivem_ip"]
                 embed = discord.Embed(
                     title="Connexion F8 - Nova Roleplay",
                     description=f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n`connect {fivem_ip}`",
-                    color=int(config['colors']['success'], 16)
+                    color=int(config["colors"]["success"], 16),
                 )
                 embed.set_footer(text=f"Depuis ton client FiveM • {now.strftime('%H:%M')}")
                 await channel.send(embed=embed)
@@ -187,17 +230,16 @@ bot = NovaBot()
 # ╔════════════════════════════════════════════════════╗
 # ║                     COMMANDES                      ║
 # ╚════════════════════════════════════════════════════╝
-
 def has_admin_role(interaction: discord.Interaction) -> bool:
-    return any(role.id in ADMIN_ROLE_IDS for role in getattr(interaction.user, 'roles', []))
+    return any(role.id in ADMIN_ROLE_IDS for role in getattr(interaction.user, "roles", []))
 
 @bot.tree.command(name="f8", description="Connexion auto au serveur")
 async def f8(interaction: discord.Interaction):
-    fivem_ip = config['server_info']['fivem_ip']
+    fivem_ip = config["server_info"]["fivem_ip"]
     embed = discord.Embed(
         title="Connexion F8 - Nova Roleplay",
         description=f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n`connect {fivem_ip}`",
-        color=int(config['colors']['success'], 16)
+        color=int(config["colors"]["success"], 16),
     )
     embed.set_footer(text="Depuis ton client FiveM")
     await interaction.response.send_message(embed=embed)
@@ -207,7 +249,7 @@ async def donation(interaction: discord.Interaction):
     embed = discord.Embed(
         title="💵 Donation Nova Roleplay",
         description=f"Soutenez le serveur par virement Interac: `{config['server_info']['donation_info']}`",
-        color=int(config['colors']['primary'], 16)
+        color=int(config["colors"]["primary"], 16),
     )
     embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
@@ -217,7 +259,7 @@ async def annonce(interaction: discord.Interaction, titre: str, message: str):
     if not has_admin_role(interaction):
         await interaction.response.send_message("❌ Accès refusé", ephemeral=True)
         return
-    embed = discord.Embed(title=f"📢 {titre}", description=message, color=int(config['colors']['primary'], 16))
+    embed = discord.Embed(title=f"📢 {titre}", description=message, color=int(config["colors"]["primary"], 16))
     embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
 
@@ -237,7 +279,7 @@ async def restart(interaction: discord.Interaction):
     embed = discord.Embed(
         title="⚙️ Redémarrage en cours",
         description="Le serveur **Nova Roleplay** redémarre, revenez dans quelques minutes.",
-        color=int(config['colors']['danger'], 16)
+        color=int(config["colors"]["danger"], 16),
     )
     embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
@@ -248,7 +290,7 @@ async def restart(interaction: discord.Interaction):
 def main():
     if not DISCORD_BOT_TOKEN:
         print("❌ Token Discord manquant")
-        exit(1)
+        raise SystemExit(1)
     if not RUN_BOT:
         print("ℹ️ Bot désactivé (RUN_BOT=0)")
         return
