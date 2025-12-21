@@ -153,7 +153,6 @@ class NovaBot(commands.Bot):
             self.server_online = False
 
     async def get_fivem_server_info(self):
-        # 1) dynamic.json (le meilleur pour clients/maxclients)
         try:
             data = await self._get_json("/dynamic.json", timeout=5)
             players = int(data.get("clients", 0))
@@ -168,7 +167,6 @@ class NovaBot(commands.Bot):
         except Exception:
             pass
 
-        # 2) info.json (fallback)
         try:
             data = await self._get_json("/info.json", timeout=5)
             players = int(data.get("clients", 0))
@@ -183,7 +181,6 @@ class NovaBot(commands.Bot):
         except Exception:
             pass
 
-        # 3) players.json (fallback count = len(list))
         try:
             data = await self._get_json("/players.json", timeout=5)
             if isinstance(data, list):
@@ -197,7 +194,7 @@ class NovaBot(commands.Bot):
         except Exception:
             pass
 
-        return {"online": False, "players": 0, "max_players": 64, "server_name": "Nova Roleplay"}
+        return {"online": True, "players": 0, "max_players": 128, "server_name": "Nova Roleplay"}
 
     # ╔════════════════════════════════════════════════════╗
     # ║                     F8 AUTO                        ║
