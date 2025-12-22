@@ -280,75 +280,7 @@ async def restart(interaction: discord.Interaction):
     )
     embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
-
-
-# ╔════════════════════════════════════════════════════╗
-# ║                     SONDAGE                        ║
-# ╚════════════════════════════════════════════════════╝
-
-class PollView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.yes_votes: set[int] = set()
-        self.no_votes: set[int] = set()
-
-    def _counts(self) -> tuple[int, int]:
-        return (len(self.yes_votes), len(self.no_votes))
-
-    def _update_embed(self, embed: discord.Embed):
-        y, n = self._counts()
-        embed.set_footer(text=f"Votes • ✅ Oui: {y} | ❌ Non: {n}")
-
-    async def _handle_vote(self, interaction: discord.Interaction, vote: str):
-        user_id = interaction.user.id
-
-        # retire l'ancien vote si déjà voté
-        self.yes_votes.discard(user_id)
-        self.no_votes.discard(user_id)
-
-        if vote == "yes":
-            self.yes_votes.add(user_id)
-        else:
-            self.no_votes.add(user_id)
-
-        # update embed
-        msg = interaction.message
-        if not msg or not msg.embeds:
-            await interaction.response.send_message("⚠️ Impossible de mettre à jour le sondage.", ephemeral=True)
-            return
-
-        embed = msg.embeds[0]
-        self._update_embed(embed)
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    @discord.ui.button(label="Oui", style=discord.ButtonStyle.success, emoji="✅")
-    async def vote_yes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_vote(interaction, "yes")
-
-    @discord.ui.button(label="Non", style=discord.ButtonStyle.danger, emoji="❌")
-    async def vote_no(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_vote(interaction, "no")
-
-
-@bot.tree.command(name="sondage", description="[ADMIN] Crée un sondage Oui/Non")
-async def sondage(interaction: discord.Interaction, question: str):
-    if not has_admin_role(interaction):
-        await interaction.response.send_message("❌ Accès refusé", ephemeral=True)
-        return
-
-    embed = discord.Embed(
-        title="📊 Sondage - Nova Roleplay",
-        description=f"**{question}**\n\nClique un bouton pour voter :",
-        color=int(config["colors"]["primary"], 16),
-    )
-    embed.timestamp = datetime.now()
-
-    view = PollView()
-    view._update_embed(embed)
-
-    await interaction.response.send_message(embed=embed, view=view)
-
-
+    
 # ╔════════════════════════════════════════════════════╗
 # ║                     MAIN                           ║
 # ╚════════════════════════════════════════════════════╝
