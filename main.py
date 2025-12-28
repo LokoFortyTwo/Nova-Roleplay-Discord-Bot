@@ -208,19 +208,38 @@ class NovaBot(commands.Bot):
         if hour in valid_hours and minute == 0:
             if self.last_f8_sent == hour:
                 return
-            channel_id = 1365802556957134858
+
+            channel_id = 1444503498342531124
             channel = self.get_channel(channel_id)
-            if channel:
-                fivem_ip = config["server_info"]["fivem_ip"]
-                embed = discord.Embed(
-                    title="Connexion F8 - Nova Roleplay",
-                    description=f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n`connect {fivem_ip}`",
-                    color=int(config["colors"]["success"], 16),
-                )
-                embed.set_footer(text=f"Depuis ton client FiveM • {now.strftime('%H:%M')}")
-                await channel.send(embed=embed)
-                self.last_f8_sent = hour
-                print(f"✅ F8 envoyé à {now.strftime('%H:%M')}")
+            if not channel:
+                return
+
+            role = discord.utils.get(channel.guild.roles, name="Whitelist")
+            mention = f"||{role.mention}||" if role else ""
+
+            fivem_ip = config["server_info"]["fivem_ip"]
+            join_link = f"fivem://connect/{fivem_ip}"
+
+            embed = discord.Embed(
+                title="Connexion F8 - Nova Roleplay",
+                description=(
+                    f"**Lien direct (clique)** : [Rejoindre maintenant]({join_link})\n\n"
+                    f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n"
+                    f"`connect {fivem_ip}`"
+                ),
+                color=int(config["colors"]["success"], 16),
+                url=join_link,
+            )
+            embed.set_footer(text=f"Depuis ton client FiveM • {now.strftime('%H:%M')}")
+
+            await channel.send(
+                content=mention,
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(roles=True)
+            )
+
+            self.last_f8_sent = hour
+            print(f"✅ F8 envoyé à {now.strftime('%H:%M')}")
 
 bot = NovaBot()
 
@@ -233,10 +252,15 @@ def has_admin_role(interaction: discord.Interaction) -> bool:
 @bot.tree.command(name="f8", description="Connexion auto au serveur")
 async def f8(interaction: discord.Interaction):
     fivem_ip = config["server_info"]["fivem_ip"]
+    join_link = f"fivem://connect/{fivem_ip}"
     embed = discord.Embed(
         title="Connexion F8 - Nova Roleplay",
-        description=f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n`connect {fivem_ip}`",
+        description=(
+            f"**Lien direct (clique)** : [Rejoindre maintenant]({join_link})\n\n"
+            f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n`connect {fivem_ip}`"
+        ),
         color=int(config["colors"]["success"], 16),
+        url=join_link,
     )
     embed.set_footer(text="Depuis ton client FiveM")
     await interaction.response.send_message(embed=embed)
@@ -280,7 +304,7 @@ async def restart(interaction: discord.Interaction):
     )
     embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
-    
+
 # ╔════════════════════════════════════════════════════╗
 # ║                     MAIN                           ║
 # ╚════════════════════════════════════════════════════╝
