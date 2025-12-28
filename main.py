@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
 # ╔════════════════════════════════════════════════════╗
-# ║               CJ DEV 2025 - NOVA ROLEPLAY BOT      ║
+# ║        CJ DEV 2025 - NOVA ROLEPLAY BOT             ║
 # ╚════════════════════════════════════════════════════╝
 
 import os
@@ -19,6 +18,10 @@ except ImportError:
     MYSQL_AVAILABLE = False
     Error = Exception
 
+# ╔════════════════════════════════════════════════════╗
+# ║                   CONFIGURATION                   ║
+# ╚════════════════════════════════════════════════════╝
+
 config_path = os.path.join(os.path.dirname(__file__), "config.json")
 try:
     with open(config_path, "r", encoding="utf-8") as f:
@@ -36,13 +39,21 @@ MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 
 ADMIN_ROLE_IDS = [
-    1342882966686404628, 1342883276066652223, 1372313750224376008,
-    1411835985666244688, 1370558513180311582, 1413711444096061510
+    1342882966686404628,
+    1342883276066652223,
+    1372313750224376008,
+    1411835985666244688,
+    1370558513180311582,
+    1413711444096061510
 ]
 
 RUN_BOT = os.getenv("RUN_BOT", "0") == "1"
 DISABLE_BACKGROUND_TASKS = os.getenv("DISABLE_BACKGROUND_TASKS", "0") == "1"
 DISABLE_MYSQL = os.getenv("DISABLE_MYSQL", "1") == "1"
+
+# ╔════════════════════════════════════════════════════╗
+# ║                 DATABASE MANAGER                  ║
+# ╚════════════════════════════════════════════════════╝
 
 class DatabaseManager:
     def __init__(self):
@@ -73,6 +84,10 @@ class DatabaseManager:
 
 db_manager = DatabaseManager()
 
+# ╔════════════════════════════════════════════════════╗
+# ║                NOVA ROLEPLAY BOT                  ║
+# ╚════════════════════════════════════════════════════╝
+
 class NovaBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -97,18 +112,8 @@ class NovaBot(commands.Bot):
 
     async def setup_hook(self):
         self.db_available = await db_manager.initialize()
-
-        guild_id = int(config["bot_settings"].get("guild_id", 0))
-        if guild_id:
-            guild = discord.Object(id=guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"✅ Commandes sync (guild) : {guild_id}")
-        else:
-            await self.tree.sync()
-            print("✅ Commandes sync (global)")
-
-        print(f"✅ Setup OK pour {self.user}")
+        await self.tree.sync()
+        print(f"✅ Commandes synchronisées pour {self.user}")
 
     async def on_ready(self):
         print(f"🚀 {self.user} connecté à Discord")
@@ -125,7 +130,9 @@ class NovaBot(commands.Bot):
     async def _get_json(self, path: str, timeout: int = 5):
         loop = asyncio.get_event_loop()
         url = f"{self._fivem_base}{path}"
-        return await loop.run_in_executor(None, lambda: self._fetch_json(url, timeout=timeout))
+        return await loop.run_in_executor(
+            None, lambda: self._fetch_json(url, timeout=timeout)
+        )
 
     @tasks.loop(minutes=5)
     async def update_status(self):
@@ -142,12 +149,18 @@ class NovaBot(commands.Bot):
                 status_text = f"🟢 {self.player_count}/{self.max_players} joueurs sur Nova Roleplay"
                 await self.change_presence(
                     status=discord.Status.online,
-                    activity=discord.Activity(type=discord.ActivityType.watching, name=status_text),
+                    activity=discord.Activity(
+                        type=discord.ActivityType.watching,
+                        name=status_text,
+                    ),
                 )
             else:
                 await self.change_presence(
                     status=discord.Status.idle,
-                    activity=discord.Activity(type=discord.ActivityType.watching, name="🔴 Serveur hors ligne..."),
+                    activity=discord.Activity(
+                        type=discord.ActivityType.watching,
+                        name="🔴 Serveur hors ligne...",
+                    ),
                 )
         except Exception as e:
             print(f"Erreur statut: {e}")
@@ -188,7 +201,16 @@ class NovaBot(commands.Bot):
         except Exception:
             pass
 
-        return {"online": True, "players": 0, "max_players": 128, "server_name": "Nova Roleplay"}
+        return {
+            "online": True,
+            "players": 0,
+            "max_players": 128,
+            "server_name": "Nova Roleplay",
+        }
+
+    # ╔════════════════════════════════════════════════════╗
+    # ║                     F8 AUTO                      ║
+    # ╚════════════════════════════════════════════════════╝
 
     @tasks.loop(minutes=1)
     async def send_f8_auto(self):
@@ -200,68 +222,61 @@ class NovaBot(commands.Bot):
             if self.last_f8_sent == hour:
                 return
 
-            channel_id = 1444503498342531124
+            channel_id = 1365802556957134858
             channel = self.get_channel(channel_id)
-            if not channel:
-                return
 
-            role = discord.utils.get(channel.guild.roles, name="Whitelist")
-            mention = f"||{role.mention}||" if role else ""
+            if channel:
+                fivem_ip = config["server_info"]["fivem_ip"]
+                embed = discord.Embed(
+                    title="Connexion F8 - Nova Roleplay",
+                    description=(
+                        f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n"
+                        f"`connect {fivem_ip}`"
+                    ),
+                    color=int(config["colors"]["success"], 16),
+                )
+                embed.set_footer(
+                    text=f"Depuis ton client FiveM • {now.strftime('%H:%M')}"
+                )
+                await channel.send(embed=embed)
 
-            fivem_ip = config["server_info"]["fivem_ip"]
-            join_link = f"fivem://connect/{fivem_ip}"
-
-            embed = discord.Embed(
-                title="Connexion F8 - Nova Roleplay",
-                description=(
-                    f"**Lien direct (clique)** : [Rejoindre maintenant]({join_link})\n\n"
-                    f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n"
-                    f"`connect {fivem_ip}`"
-                ),
-                color=int(config["colors"]["success"], 16),
-                url=join_link,
-            )
-            embed.set_footer(text=f"Depuis ton client FiveM • {now.strftime('%H:%M')}")
-
-            await channel.send(
-                content=mention,
-                embed=embed,
-                allowed_mentions=discord.AllowedMentions(roles=True)
-            )
-
-            self.last_f8_sent = hour
-            print(f"✅ F8 envoyé à {now.strftime('%H:%M')}")
+                self.last_f8_sent = hour
+                print(f"✅ F8 envoyé à {now.strftime('%H:%M')}")
 
 bot = NovaBot()
 
+# ╔════════════════════════════════════════════════════╗
+# ║                    COMMANDES                      ║
+# ╚════════════════════════════════════════════════════╝
+
 def has_admin_role(interaction: discord.Interaction) -> bool:
-    return any(role.id in ADMIN_ROLE_IDS for role in getattr(interaction.user, "roles", []))
+    return any(
+        role.id in ADMIN_ROLE_IDS
+        for role in getattr(interaction.user, "roles", [])
+    )
 
 @bot.tree.command(name="f8", description="Connexion auto au serveur")
 async def f8(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=False)
-
     fivem_ip = config["server_info"]["fivem_ip"]
-    join_link = f"fivem://connect/{fivem_ip}"
-
     embed = discord.Embed(
         title="Connexion F8 - Nova Roleplay",
         description=(
-            f"**Lien direct (clique)** : [Rejoindre maintenant]({join_link})\n\n"
-            f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n`connect {fivem_ip}`"
+            f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n"
+            f"`connect {fivem_ip}`"
         ),
         color=int(config["colors"]["success"], 16),
-        url=join_link,
     )
     embed.set_footer(text="Depuis ton client FiveM")
-
-    await interaction.followup.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="donation", description="Infos donation Nova Roleplay")
 async def donation(interaction: discord.Interaction):
     embed = discord.Embed(
         title="💵 Donation Nova Roleplay",
-        description=f"Soutenez le serveur par virement Interac: `{config['server_info']['donation_info']}`",
+        description=(
+            f"Soutenez le serveur par virement Interac: "
+            f"{config['server_info']['donation_info']}"
+        ),
         color=int(config["colors"]["primary"], 16),
     )
     embed.timestamp = datetime.now()
@@ -270,40 +285,65 @@ async def donation(interaction: discord.Interaction):
 @bot.tree.command(name="annonce", description="[ADMIN] Envoyer une annonce")
 async def annonce(interaction: discord.Interaction, titre: str, message: str):
     if not has_admin_role(interaction):
-        await interaction.response.send_message("❌ Accès refusé", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Accès refusé", ephemeral=True
+        )
         return
-    embed = discord.Embed(title=f"📢 {titre}", description=message, color=int(config["colors"]["primary"], 16))
+
+    embed = discord.Embed(
+        title=f"📢 {titre}",
+        description=message,
+        color=int(config["colors"]["primary"], 16),
+    )
     embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="clear", description="[ADMIN] Supprime un nombre de messages")
 async def clear(interaction: discord.Interaction, nombre: int):
     if not has_admin_role(interaction):
-        await interaction.response.send_message("❌ Accès refusé", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Accès refusé", ephemeral=True
+        )
         return
+
     deleted = await interaction.channel.purge(limit=nombre)
-    await interaction.response.send_message(f"🧹 {len(deleted)} messages supprimés.", ephemeral=True)
+    await interaction.response.send_message(
+        f"🧹 {len(deleted)} messages supprimés.",
+        ephemeral=True,
+    )
 
 @bot.tree.command(name="restart", description="[ADMIN] Annonce un redémarrage serveur")
 async def restart(interaction: discord.Interaction):
     if not has_admin_role(interaction):
-        await interaction.response.send_message("❌ Accès refusé", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Accès refusé", ephemeral=True
+        )
         return
+
     embed = discord.Embed(
         title="⚙️ Redémarrage en cours",
-        description="Le serveur **Nova Roleplay** redémarre, revenez dans quelques minutes.",
+        description=(
+            "Le serveur **Nova Roleplay** redémarre, "
+            "revenez dans quelques minutes."
+        ),
         color=int(config["colors"]["danger"], 16),
     )
     embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
 
+# ╔════════════════════════════════════════════════════╗
+# ║                      MAIN                         ║
+# ╚════════════════════════════════════════════════════╝
+
 def main():
     if not DISCORD_BOT_TOKEN:
         print("❌ Token Discord manquant")
         raise SystemExit(1)
+
     if not RUN_BOT:
         print("ℹ️ Bot désactivé (RUN_BOT=0)")
         return
+
     bot.run(DISCORD_BOT_TOKEN)
 
 if __name__ == "__main__":
