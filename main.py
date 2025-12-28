@@ -19,9 +19,6 @@ except ImportError:
     MYSQL_AVAILABLE = False
     Error = Exception
 
-# ╔════════════════════════════════════════════════════╗
-# ║                   CONFIGURATION                   ║
-# ╚════════════════════════════════════════════════════╝
 config_path = os.path.join(os.path.dirname(__file__), "config.json")
 try:
     with open(config_path, "r", encoding="utf-8") as f:
@@ -47,9 +44,6 @@ RUN_BOT = os.getenv("RUN_BOT", "0") == "1"
 DISABLE_BACKGROUND_TASKS = os.getenv("DISABLE_BACKGROUND_TASKS", "0") == "1"
 DISABLE_MYSQL = os.getenv("DISABLE_MYSQL", "1") == "1"
 
-# ╔════════════════════════════════════════════════════╗
-# ║                    DATABASE MANAGER                ║
-# ╚════════════════════════════════════════════════════╝
 class DatabaseManager:
     def __init__(self):
         self.connection_params = {
@@ -79,9 +73,6 @@ class DatabaseManager:
 
 db_manager = DatabaseManager()
 
-# ╔════════════════════════════════════════════════════╗
-# ║                    NOVA ROLEPLAY BOT               ║
-# ╚════════════════════════════════════════════════════╝
 class NovaBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -106,8 +97,18 @@ class NovaBot(commands.Bot):
 
     async def setup_hook(self):
         self.db_available = await db_manager.initialize()
-        await self.tree.sync()
-        print(f"✅ Commandes synchronisées pour {self.user}")
+
+        guild_id = int(config["bot_settings"].get("guild_id", 0))
+        if guild_id:
+            guild = discord.Object(id=guild_id)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            print(f"✅ Commandes sync (guild) : {guild_id}")
+        else:
+            await self.tree.sync()
+            print("✅ Commandes sync (global)")
+
+        print(f"✅ Setup OK pour {self.user}")
 
     async def on_ready(self):
         print(f"🚀 {self.user} connecté à Discord")
@@ -155,28 +156,22 @@ class NovaBot(commands.Bot):
     async def get_fivem_server_info(self):
         try:
             data = await self._get_json("/dynamic.json", timeout=5)
-            players = int(data.get("clients", 0))
-            max_players = int(data.get("sv_maxclients", 64))
-            hostname = data.get("hostname", "Nova Roleplay")
             return {
                 "online": True,
-                "players": players,
-                "max_players": max_players,
-                "server_name": hostname,
+                "players": int(data.get("clients", 0)),
+                "max_players": int(data.get("sv_maxclients", 64)),
+                "server_name": data.get("hostname", "Nova Roleplay"),
             }
         except Exception:
             pass
 
         try:
             data = await self._get_json("/info.json", timeout=5)
-            players = int(data.get("clients", 0))
-            max_players = int(data.get("sv_maxclients", 64))
-            hostname = data.get("hostname", "Nova Roleplay")
             return {
                 "online": True,
-                "players": players,
-                "max_players": max_players,
-                "server_name": hostname,
+                "players": int(data.get("clients", 0)),
+                "max_players": int(data.get("sv_maxclients", 64)),
+                "server_name": data.get("hostname", "Nova Roleplay"),
             }
         except Exception:
             pass
@@ -184,10 +179,9 @@ class NovaBot(commands.Bot):
         try:
             data = await self._get_json("/players.json", timeout=5)
             if isinstance(data, list):
-                players = len(data)
                 return {
                     "online": True,
-                    "players": players,
+                    "players": len(data),
                     "max_players": 64,
                     "server_name": "Nova Roleplay",
                 }
@@ -196,14 +190,11 @@ class NovaBot(commands.Bot):
 
         return {"online": True, "players": 0, "max_players": 128, "server_name": "Nova Roleplay"}
 
-    # ╔════════════════════════════════════════════════════╗
-    # ║                     F8 AUTO                        ║
-    # ╚════════════════════════════════════════════════════╝
     @tasks.loop(minutes=1)
     async def send_f8_auto(self):
         now = datetime.now()
         hour, minute = now.hour, now.minute
-        valid_hours = list(range(0, 24, 2))  # Toutes les 2h : 0,2,4,...,22
+        valid_hours = list(range(0, 24, 2))
 
         if hour in valid_hours and minute == 0:
             if self.last_f8_sent == hour:
@@ -243,16 +234,16 @@ class NovaBot(commands.Bot):
 
 bot = NovaBot()
 
-# ╔════════════════════════════════════════════════════╗
-# ║                     COMMANDES                      ║
-# ╚════════════════════════════════════════════════════╝
 def has_admin_role(interaction: discord.Interaction) -> bool:
     return any(role.id in ADMIN_ROLE_IDS for role in getattr(interaction.user, "roles", []))
 
 @bot.tree.command(name="f8", description="Connexion auto au serveur")
 async def f8(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=False)
+
     fivem_ip = config["server_info"]["fivem_ip"]
     join_link = f"fivem://connect/{fivem_ip}"
+
     embed = discord.Embed(
         title="Connexion F8 - Nova Roleplay",
         description=(
@@ -263,7 +254,8 @@ async def f8(interaction: discord.Interaction):
         url=join_link,
     )
     embed.set_footer(text="Depuis ton client FiveM")
-    await interaction.response.send_message(embed=embed)
+
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="donation", description="Infos donation Nova Roleplay")
 async def donation(interaction: discord.Interaction):
@@ -305,9 +297,6 @@ async def restart(interaction: discord.Interaction):
     embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
 
-# ╔════════════════════════════════════════════════════╗
-# ║                     MAIN                           ║
-# ╚════════════════════════════════════════════════════╝
 def main():
     if not DISCORD_BOT_TOKEN:
         print("❌ Token Discord manquant")
