@@ -5,9 +5,9 @@
         "prefix": "!"
     },
     "server_info": {
-        "fivem_ip": "144.217.10.72",
+        "fivem_ip": "connect http://join.novaroleplay.cloud/",
         "rules_channel_id": "1365802245551161424",
-        "donation_info": "freddilauro@yahoo.com"
+        "donation_info": "donations@novaroleplay.cloud"
     },
     "colors": {
         "primary": "00ff00",
