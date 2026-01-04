@@ -5,6 +5,7 @@ import requests
 import discord
 from discord.ext import commands, tasks
 from datetime import datetime
+from urllib.parse import urlparse
 
 
 config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -18,6 +19,19 @@ except FileNotFoundError:
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 RUN_BOT = os.getenv("RUN_BOT", "0") == "1"
 DISABLE_BACKGROUND_TASKS = os.getenv("DISABLE_BACKGROUND_TASKS", "0") == "1"
+
+
+def normalize_target(value: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        return ""
+    if v.startswith("http://") or v.startswith("https://"):
+        p = urlparse(v)
+        v = (p.netloc or "").strip()
+    v = v.replace("fivem://connect/", "").strip()
+    if "/" in v:
+        v = v.split("/", 1)[0].strip()
+    return v
 
 
 class VoteView(discord.ui.View):
@@ -90,8 +104,12 @@ class NovaBot(commands.Bot):
         self.player_count = 0
         self.max_players = 64
 
-        self._fivem_host = config["server_info"]["fivem_ip"]
-        self._fivem_base = f"http://{self._fivem_host}:30120"
+        join_value = config["server_info"]["fivem_ip"]
+        self._connect_target = normalize_target(join_value)
+
+        status_value = config["server_info"].get("status_host") or join_value
+        self._status_host = normalize_target(status_value)
+        self._fivem_base = f"http://{self._status_host}:30120"
 
     async def setup_hook(self):
         await self.tree.sync()
@@ -183,11 +201,11 @@ bot = NovaBot()
 
 @bot.tree.command(name="f8", description="Connexion auto au serveur")
 async def f8(interaction: discord.Interaction):
-    fivem_ip = config["server_info"]["fivem_ip"]
+    target = bot._connect_target
     line = await bot.server_line()
     embed = discord.Embed(
         title="Connexion F8",
-        description=f"Ouvre FiveM, appuie sur F8, et tape:\n\nconnect {fivem_ip}\n\n{line}",
+        description=f"Ouvre FiveM, appuie sur F8, et tape:\n\nconnect {target}\n\n{line}",
         color=int(config["colors"]["success"], 16),
         timestamp=datetime.now(),
     )
