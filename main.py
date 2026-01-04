@@ -214,14 +214,13 @@ async def f8(interaction: discord.Interaction):
 
 @bot.tree.command(name="donation", description="Infos donation Nova Roleplay")
 async def donation(interaction: discord.Interaction):
-    line = await bot.server_line()
     embed = discord.Embed(
         title="Donation",
-        description=f"Virement Interac: {config['server_info']['donation_info']}\n\n{line}",
+        description=f"Virement Interac: {config['server_info']['donation_info']}",
         color=int(config["colors"]["primary"], 16),
         timestamp=datetime.now(),
     )
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed
 
 
 @bot.tree.command(name="vote", description="Creer un vote")
