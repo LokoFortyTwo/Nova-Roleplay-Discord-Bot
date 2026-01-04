@@ -175,7 +175,7 @@ class NovaBot(commands.Bot):
             self.max_players = 64
 
         if self.server_online:
-            name = f"{self.player_count}/{self.max_players} joueurs"
+            name = f"{self.player_count}/{self.max_players} joueurs en ligne"
             await self.change_presence(
                 status=discord.Status.online,
                 activity=discord.Activity(type=discord.ActivityType.watching, name=name),
