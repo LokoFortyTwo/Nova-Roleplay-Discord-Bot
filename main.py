@@ -220,7 +220,8 @@ async def donation(interaction: discord.Interaction):
         color=int(config["colors"]["primary"], 16),
         timestamp=datetime.now(),
     )
-    await interaction.response.send_message(embed=embed
+    await interaction.response.send_message(embed=embed)
+    
 
 
 @bot.tree.command(name="vote", description="Creer un vote")
