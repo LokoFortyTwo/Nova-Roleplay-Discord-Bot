@@ -1,100 +1,86 @@
-# ╔════════════════════════════════════════════════════╗
-# ║        CJ DEV 2025 - NOVA ROLEPLAY BOT             ║
-# ╚════════════════════════════════════════════════════╝
-
 import os
 import json
 import asyncio
-import requests
+import aiohttp
 import discord
 from discord.ext import commands, tasks
 from datetime import datetime
+from typing import Dict, Optional
 
-try:
-    import mysql.connector
-    from mysql.connector import Error
-    MYSQL_AVAILABLE = True
-except ImportError:
-    MYSQL_AVAILABLE = False
-    Error = Exception
-
-# ╔════════════════════════════════════════════════════╗
-# ║                   CONFIGURATION                   ║
-# ╚════════════════════════════════════════════════════╝
 
 config_path = os.path.join(os.path.dirname(__file__), "config.json")
 try:
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 except FileNotFoundError:
-    print("❌ config.json introuvable")
+    print("config.json introuvable")
     raise SystemExit(1)
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-
-MYSQL_HOST = os.getenv("MYSQL_HOST")
-MYSQL_USER = os.getenv("MYSQL_USER")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
-
-ADMIN_ROLE_IDS = [
-    1342882966686404628,
-    1342883276066652223,
-    1372313750224376008,
-    1411835985666244688,
-    1370558513180311582,
-    1413711444096061510
-]
-
 RUN_BOT = os.getenv("RUN_BOT", "0") == "1"
 DISABLE_BACKGROUND_TASKS = os.getenv("DISABLE_BACKGROUND_TASKS", "0") == "1"
-DISABLE_MYSQL = os.getenv("DISABLE_MYSQL", "1") == "1"
 
-# ╔════════════════════════════════════════════════════╗
-# ║                 DATABASE MANAGER                  ║
-# ╚════════════════════════════════════════════════════╝
 
-class DatabaseManager:
-    def __init__(self):
-        self.connection_params = {
-            "host": MYSQL_HOST,
-            "user": MYSQL_USER,
-            "password": MYSQL_PASSWORD,
-            "database": MYSQL_DATABASE,
-            "port": MYSQL_PORT,
-            "autocommit": True,
-            "charset": "utf8mb4",
-        }
+class VoteView(discord.ui.View):
+    def __init__(self, question: str, options: Dict[str, int]):
+        super().__init__(timeout=None)
+        self.question = question
+        self.options = options
+        self.voters: Dict[int, str] = {}
+        for label in options.keys():
+            self.add_item(VoteButton(label))
 
-    async def initialize(self):
-        if DISABLE_MYSQL or not MYSQL_AVAILABLE:
-            return False
-        try:
-            if not all([MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE]):
-                return False
-            connection = mysql.connector.connect(**self.connection_params)
-            if connection.is_connected():
-                connection.close()
-                return True
-        except Error as e:
-            print(f"⚠️ Erreur MySQL: {e}")
-            return False
-        return False
+    def total_votes(self) -> int:
+        return sum(self.options.values())
 
-db_manager = DatabaseManager()
+    def render_embed(self) -> discord.Embed:
+        total = self.total_votes()
+        embed = discord.Embed(
+            title="Vote",
+            description=self.question,
+            color=int(config["colors"]["primary"], 16),
+            timestamp=datetime.now(),
+        )
+        lines = []
+        for label, count in self.options.items():
+            pct = (count / total * 100.0) if total > 0 else 0.0
+            lines.append(f"{label} : {count} ({pct:.0f}%)")
+        embed.add_field(name="Resultats", value="\n".join(lines) if lines else "Aucun vote", inline=False)
+        embed.set_footer(text=f"Total: {total}")
+        return embed
 
-# ╔════════════════════════════════════════════════════╗
-# ║                NOVA ROLEPLAY BOT                  ║
-# ╚════════════════════════════════════════════════════╝
+
+class VoteButton(discord.ui.Button):
+    def __init__(self, label: str):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: VoteView = self.view  # type: ignore
+        if interaction.user is None:
+            return
+
+        uid = interaction.user.id
+        choice = self.label
+
+        prev = view.voters.get(uid)
+        if prev == choice:
+            await interaction.response.send_message("Tu as deja vote pour ce choix.", ephemeral=True)
+            return
+
+        if prev is not None:
+            if prev in view.options and view.options[prev] > 0:
+                view.options[prev] -= 1
+
+        view.voters[uid] = choice
+        view.options[choice] = view.options.get(choice, 0) + 1
+
+        await interaction.response.edit_message(embed=view.render_embed(), view=view)
+
 
 class NovaBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.message_content = True
         intents.guilds = True
-        intents.members = True
-
         super().__init__(
             command_prefix=config["bot_settings"]["prefix"],
             intents=intents,
@@ -104,93 +90,52 @@ class NovaBot(commands.Bot):
         self.server_online = False
         self.player_count = 0
         self.max_players = 64
-        self.db_available = False
-        self.last_f8_sent = None
 
         self._fivem_host = config["server_info"]["fivem_ip"]
         self._fivem_base = f"http://{self._fivem_host}:30120"
+        self.http: Optional[aiohttp.ClientSession] = None
 
     async def setup_hook(self):
-        self.db_available = await db_manager.initialize()
+        self.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6))
         await self.tree.sync()
-        print(f"✅ Commandes synchronisées pour {self.user}")
+        print(f"Commandes synchronisees pour {self.user}")
+
+    async def close(self):
+        try:
+            if self.http and not self.http.closed:
+                await self.http.close()
+        finally:
+            await super().close()
 
     async def on_ready(self):
-        print(f"🚀 {self.user} connecté à Discord")
-        if not DISABLE_BACKGROUND_TASKS:
-            if not self.update_status.is_running():
-                self.update_status.start()
-            if not self.send_f8_auto.is_running():
-                self.send_f8_auto.start()
+        print(f"{self.user} connecte")
+        if not DISABLE_BACKGROUND_TASKS and not self.update_status.is_running():
+            self.update_status.start()
         await self.update_status_once()
 
-    def _fetch_json(self, url: str, timeout: int = 5):
-        return requests.get(url, timeout=timeout).json()
-
-    async def _get_json(self, path: str, timeout: int = 5):
-        loop = asyncio.get_event_loop()
+    async def _get_json(self, path: str):
+        if not self.http:
+            raise RuntimeError("HTTP session not ready")
         url = f"{self._fivem_base}{path}"
-        return await loop.run_in_executor(
-            None, lambda: self._fetch_json(url, timeout=timeout)
-        )
-
-    @tasks.loop(minutes=5)
-    async def update_status(self):
-        await self.update_status_once()
-
-    async def update_status_once(self):
-        try:
-            server_info = await self.get_fivem_server_info()
-            self.server_online = server_info["online"]
-            self.player_count = server_info["players"]
-            self.max_players = server_info["max_players"]
-
-            if server_info["online"]:
-                status_text = f"🟢 {self.player_count}/{self.max_players} joueurs sur Nova Roleplay"
-                await self.change_presence(
-                    status=discord.Status.online,
-                    activity=discord.Activity(
-                        type=discord.ActivityType.watching,
-                        name=status_text,
-                    ),
-                )
-            else:
-                await self.change_presence(
-                    status=discord.Status.idle,
-                    activity=discord.Activity(
-                        type=discord.ActivityType.watching,
-                        name="🔴 Serveur hors ligne...",
-                    ),
-                )
-        except Exception as e:
-            print(f"Erreur statut: {e}")
-            self.server_online = False
+        async with self.http.get(url) as r:
+            r.raise_for_status()
+            return await r.json()
 
     async def get_fivem_server_info(self):
-        try:
-            data = await self._get_json("/dynamic.json", timeout=5)
-            return {
-                "online": True,
-                "players": int(data.get("clients", 0)),
-                "max_players": int(data.get("sv_maxclients", 64)),
-                "server_name": data.get("hostname", "Nova Roleplay"),
-            }
-        except Exception:
-            pass
+        for path in ("/dynamic.json", "/info.json"):
+            try:
+                data = await self._get_json(path)
+                return {
+                    "online": True,
+                    "players": int(data.get("clients", 0)),
+                    "max_players": int(data.get("sv_maxclients", 64)),
+                    "server_name": data.get("hostname", "Nova Roleplay"),
+                }
+            except Exception:
+                pass
 
         try:
-            data = await self._get_json("/info.json", timeout=5)
-            return {
-                "online": True,
-                "players": int(data.get("clients", 0)),
-                "max_players": int(data.get("sv_maxclients", 64)),
-                "server_name": data.get("hostname", "Nova Roleplay"),
-            }
-        except Exception:
-            pass
-
-        try:
-            data = await self._get_json("/players.json", timeout=5)
+            data = await self._get_json("/players.json")
             if isinstance(data, list):
                 return {
                     "online": True,
@@ -202,149 +147,120 @@ class NovaBot(commands.Bot):
             pass
 
         return {
-            "online": True,
+            "online": False,
             "players": 0,
-            "max_players": 128,
+            "max_players": 64,
             "server_name": "Nova Roleplay",
         }
 
-    # ╔════════════════════════════════════════════════════╗
-    # ║                     F8 AUTO                      ║
-    # ╚════════════════════════════════════════════════════╝
+    @tasks.loop(minutes=2)
+    async def update_status(self):
+        await self.update_status_once()
 
-    @tasks.loop(minutes=1)
-    async def send_f8_auto(self):
-        now = datetime.now()
-        hour, minute = now.hour, now.minute
-        valid_hours = list(range(0, 24, 2))
+    async def update_status_once(self):
+        try:
+            server_info = await self.get_fivem_server_info()
+            self.server_online = server_info["online"]
+            self.player_count = server_info["players"]
+            self.max_players = server_info["max_players"]
+        except Exception:
+            self.server_online = False
+            self.player_count = 0
+            self.max_players = 64
 
-        if hour in valid_hours and minute == 0:
-            if self.last_f8_sent == hour:
-                return
+        if self.server_online:
+            status_text = f"{self.player_count}/{self.max_players} joueurs"
+            await self.change_presence(
+                status=discord.Status.online,
+                activity=discord.Activity(type=discord.ActivityType.watching, name=status_text),
+            )
+        else:
+            await self.change_presence(
+                status=discord.Status.idle,
+                activity=discord.Activity(type=discord.ActivityType.watching, name="Serveur hors ligne"),
+            )
 
-            channel_id = 1365802556957134858
-            channel = self.get_channel(channel_id)
-
-            if channel:
-                fivem_ip = config["server_info"]["fivem_ip"]
-                embed = discord.Embed(
-                    title="Connexion F8 - Nova Roleplay",
-                    description=(
-                        f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n"
-                        f"`connect {fivem_ip}`"
-                    ),
-                    color=int(config["colors"]["success"], 16),
-                )
-                embed.set_footer(
-                    text=f"Depuis ton client FiveM • {now.strftime('%H:%M')}"
-                )
-                await channel.send(embed=embed)
-
-                self.last_f8_sent = hour
-                print(f"✅ F8 envoyé à {now.strftime('%H:%M')}")
 
 bot = NovaBot()
 
-# ╔════════════════════════════════════════════════════╗
-# ║                    COMMANDES                      ║
-# ╚════════════════════════════════════════════════════╝
 
-def has_admin_role(interaction: discord.Interaction) -> bool:
-    return any(
-        role.id in ADMIN_ROLE_IDS
-        for role in getattr(interaction.user, "roles", [])
-    )
+async def server_line() -> str:
+    try:
+        info = await bot.get_fivem_server_info()
+        if info["online"]:
+            return f"Joueurs en ligne: {info['players']}/{info['max_players']}"
+        return "Serveur hors ligne"
+    except Exception:
+        return "Serveur hors ligne"
+
 
 @bot.tree.command(name="f8", description="Connexion auto au serveur")
 async def f8(interaction: discord.Interaction):
     fivem_ip = config["server_info"]["fivem_ip"]
+    line = await server_line()
     embed = discord.Embed(
-        title="Connexion F8 - Nova Roleplay",
-        description=(
-            f"Ouvre FiveM, appuie sur **F8**, et tape :\n\n"
-            f"`connect {fivem_ip}`"
-        ),
+        title="Connexion F8",
+        description=f"Ouvre FiveM, appuie sur F8, et tape:\n\nconnect {fivem_ip}\n\n{line}",
         color=int(config["colors"]["success"], 16),
+        timestamp=datetime.now(),
     )
-    embed.set_footer(text="Depuis ton client FiveM")
     await interaction.response.send_message(embed=embed)
+
 
 @bot.tree.command(name="donation", description="Infos donation Nova Roleplay")
 async def donation(interaction: discord.Interaction):
+    line = await server_line()
     embed = discord.Embed(
-        title="💵 Donation Nova Roleplay",
-        description=(
-            f"Soutenez le serveur par virement Interac: "
-            f"{config['server_info']['donation_info']}"
-        ),
+        title="Donation",
+        description=f"Virement Interac: {config['server_info']['donation_info']}\n\n{line}",
         color=int(config["colors"]["primary"], 16),
+        timestamp=datetime.now(),
     )
-    embed.timestamp = datetime.now()
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="annonce", description="[ADMIN] Envoyer une annonce")
-async def annonce(interaction: discord.Interaction, titre: str, message: str):
-    if not has_admin_role(interaction):
-        await interaction.response.send_message(
-            "❌ Accès refusé", ephemeral=True
-        )
+
+@bot.tree.command(name="vote", description="Creer un vote")
+async def vote(
+    interaction: discord.Interaction,
+    question: str,
+    choix1: str,
+    choix2: str,
+    choix3: str = "",
+    choix4: str = "",
+    choix5: str = "",
+    choix6: str = "",
+):
+    opts = [choix1, choix2, choix3, choix4, choix5, choix6]
+    labels = [o.strip() for o in opts if o and o.strip()]
+    seen = set()
+    clean = []
+    for l in labels:
+        if l.lower() in seen:
+            continue
+        seen.add(l.lower())
+        clean.append(l)
+
+    if len(clean) < 2:
+        await interaction.response.send_message("Il faut au moins 2 choix.", ephemeral=True)
         return
+    if len(clean) > 6:
+        clean = clean[:6]
 
-    embed = discord.Embed(
-        title=f"📢 {titre}",
-        description=message,
-        color=int(config["colors"]["primary"], 16),
-    )
-    embed.timestamp = datetime.now()
-    await interaction.response.send_message(embed=embed)
+    options = {l: 0 for l in clean}
+    view = VoteView(question=question, options=options)
+    embed = view.render_embed()
+    await interaction.response.send_message(embed=embed, view=view)
 
-@bot.tree.command(name="clear", description="[ADMIN] Supprime un nombre de messages")
-async def clear(interaction: discord.Interaction, nombre: int):
-    if not has_admin_role(interaction):
-        await interaction.response.send_message(
-            "❌ Accès refusé", ephemeral=True
-        )
-        return
-
-    deleted = await interaction.channel.purge(limit=nombre)
-    await interaction.response.send_message(
-        f"🧹 {len(deleted)} messages supprimés.",
-        ephemeral=True,
-    )
-
-@bot.tree.command(name="restart", description="[ADMIN] Annonce un redémarrage serveur")
-async def restart(interaction: discord.Interaction):
-    if not has_admin_role(interaction):
-        await interaction.response.send_message(
-            "❌ Accès refusé", ephemeral=True
-        )
-        return
-
-    embed = discord.Embed(
-        title="⚙️ Redémarrage en cours",
-        description=(
-            "Le serveur **Nova Roleplay** redémarre, "
-            "revenez dans quelques minutes."
-        ),
-        color=int(config["colors"]["danger"], 16),
-    )
-    embed.timestamp = datetime.now()
-    await interaction.response.send_message(embed=embed)
-
-# ╔════════════════════════════════════════════════════╗
-# ║                      MAIN                         ║
-# ╚════════════════════════════════════════════════════╝
 
 def main():
     if not DISCORD_BOT_TOKEN:
-        print("❌ Token Discord manquant")
+        print("Token Discord manquant")
         raise SystemExit(1)
-
     if not RUN_BOT:
-        print("ℹ️ Bot désactivé (RUN_BOT=0)")
+        print("Bot desactive (RUN_BOT=0)")
         return
-
     bot.run(DISCORD_BOT_TOKEN)
+
 
 if __name__ == "__main__":
     main()
